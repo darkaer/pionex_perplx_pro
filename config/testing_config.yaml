@@ -12,23 +12,25 @@ trading:
     - "ADA/USDT"
     - "DOT/USDT"
     - "LINK/USDT"
-  max_position_size: 0.05  # Conservative 5% position size
-  default_leverage: 1.0    # No leverage in testing
-  stop_loss_percentage: 1.5
-  take_profit_percentage: 3.0
+    - "SHIB/USDT"
+    - "SUI/USDT"
+  max_position_size: 0.10  # Conservative 5% position size
+  default_leverage: 15.0    # No leverage in testing
+  stop_loss_percentage: 3.5
+  take_profit_percentage: 13.0
   order_timeout_minutes: 15
 
 risk_management:
-  max_daily_loss_percentage: 2.0  # Very conservative
-  max_consecutive_losses: 2       # Stop after 2 losses
-  max_drawdown_percentage: 5.0    # Tight drawdown control
+  max_daily_loss_percentage: 12.0  # Very conservative
+  max_consecutive_losses: 3       # Stop after 2 losses
+  max_drawdown_percentage: 15.0    # Tight drawdown control
   position_timeout_hours: 12      # Shorter position timeout
   emergency_stop_enabled: true
   volatility_threshold: 3.0       # Lower volatility threshold
 
 ai_prompts:
-  confidence_threshold: 0.8  # Higher confidence required for testing
-  temperature: 0.2           # More conservative AI responses
+  confidence_threshold: 0.7  # Higher confidence required for testing
+  temperature: 0.3           # More conservative AI responses
 
 websocket:
   # Use mock endpoints for testing

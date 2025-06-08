@@ -7,22 +7,28 @@ trading:
     - "BTC/USDT"
     - "ETH/USDT"
     - "BNB/USDT"
+    - "SOL/USDT"
+    - "XRP/USDT"
+    - "DOGE/USDT"
+    - "DOT/USDT"
+    - "SUI/USDT"
+    - "SHIB/USDT"
   max_position_size: 0.15    # Larger position size for profits
-  default_leverage: 2.0      # Moderate leverage
-  stop_loss_percentage: 2.5
-  take_profit_percentage: 5.0
+  default_leverage: 15.0      # Moderate leverage
+  stop_loss_percentage: 3.5
+  take_profit_percentage: 15.0
   order_timeout_minutes: 45
 
 risk_management:
   max_daily_loss_percentage: 5.0
   max_consecutive_losses: 3
-  max_drawdown_percentage: 10.0
+  max_drawdown_percentage: 15.0
   position_timeout_hours: 24
   emergency_stop_enabled: true
   volatility_threshold: 5.0
 
 ai_prompts:
-  confidence_threshold: 0.65  # More active trading threshold
+  confidence_threshold: 0.75  # More active trading threshold
   temperature: 0.3
 
 websocket:
@@ -36,7 +42,7 @@ logging:
 
 notifications:
   discord_webhook_url: ""  # Will be set via environment
-  email_enabled: true
+  email_enabled: false
 
 # Production specific settings
 production:

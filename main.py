@@ -152,7 +152,8 @@ class AITradingBot:
                 await self._manage_positions()
 
                 # Wait before next iteration
-                await asyncio.sleep(30)  # Check every 30 seconds
+                trade_loop_time = float(os.getenv("TRADE_LOOP_TIME", 30))
+                await asyncio.sleep(trade_loop_time)  # Configurable trade loop interval
 
             except Exception as e:
                 self.logger.error(f"Error in trading loop: {str(e)}")
