@@ -12,6 +12,14 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import json
+import os
+try:
+    from dotenv import load_dotenv
+    env_path = Path('.') / '.env'
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+except ImportError:
+    pass
 
 # Import our modules
 from config_manager import ConfigManager, BotConfig
@@ -78,7 +86,20 @@ class AITradingBot:
             self.risk_manager = RiskManager(self.config)
 
             # Initialize risk manager with starting balance
-            starting_balance = 5000.0 if self.mode == "testing" else 10000.0  # Default values
+            env_balance = os.getenv("TRADING_BOT_INITIAL_BALANCE")
+            if env_balance is not None:
+                try:
+                    starting_balance = float(env_balance)
+                    self.logger.info(f"Using starting balance from environment: ${starting_balance}")
+                except ValueError:
+                    self.logger.warning(f"Invalid TRADING_BOT_INITIAL_BALANCE value: {env_balance}, using default.")
+                    starting_balance = 5000.0 if self.mode == "testing" else 10000.0
+            elif hasattr(self.config, "testing") and hasattr(self.config.testing, "initial_balance"):
+                starting_balance = self.config.testing.initial_balance
+                self.logger.info(f"Using starting balance from config: ${starting_balance}")
+            else:
+                starting_balance = 5000.0 if self.mode == "testing" else 10000.0
+                self.logger.info(f"Using default starting balance: ${starting_balance}")
             self.risk_manager.initialize(starting_balance)
 
             # Setup signal handlers for graceful shutdown
