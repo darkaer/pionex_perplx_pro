@@ -13,6 +13,13 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import json
 import os
+import pandas as pd
+import ta
+import aiohttp
+import hmac
+import hashlib
+import time
+import uuid
 try:
     from dotenv import load_dotenv
     env_path = Path('.') / '.env'
@@ -79,10 +86,7 @@ class AITradingBot:
 
             # Initialize components
             self.perplexity_api = PerplexityAPI(self.config)
-            self.websocket_handler = PionexWebSocketHandler(
-                self.config, 
-                message_handler=self._handle_market_data
-            )
+            self.websocket_handler = PionexWebSocketHandler(mode=self.mode)
             self.risk_manager = RiskManager(self.config)
 
             # Initialize risk manager with starting balance
@@ -126,11 +130,17 @@ class AITradingBot:
             # Connect to WebSocket
             await self.websocket_handler.connect()
 
-            # Start main trading loop
+            # Subscribe to trade data for all trading pairs
+            for trading_pair in self.config.trading.trading_pairs:
+                symbol = trading_pair.replace("/", "_")
+                await self.websocket_handler.subscribe("TRADE", symbol)
+
+            # Start main trading loop and balance sync
             await asyncio.gather(
                 self._trading_loop(),
                 self._websocket_loop(),
-                self._monitoring_loop()
+                self._monitoring_loop(),
+                self._sync_balance_loop()
             )
 
         except Exception as e:
@@ -162,7 +172,8 @@ class AITradingBot:
     async def _websocket_loop(self):
         """WebSocket message handling loop"""
         try:
-            await self.websocket_handler.listen()
+            while self.running:
+                await asyncio.sleep(1)  # Keep the coroutine alive
         except Exception as e:
             self.logger.error(f"WebSocket loop error: {str(e)}")
 
@@ -236,8 +247,30 @@ class AITradingBot:
                 "bb_upper": 46000,
                 "bb_lower": 44000,
                 "support_level": 44500,
-                "resistance_level": 45500
+                "resistance_level": 45500,
+                "ema_20": 45200 + random.randint(-200, 200),
+                "ma_50": 45000 + random.randint(-200, 200)
             }
+        else:
+            # Try to calculate indicators if OHLCV data is available
+            ohlcv = current_data.get("ohlcv")  # Expecting a DataFrame or dict with columns: open, high, low, close, volume
+            if ohlcv is not None:
+                if isinstance(ohlcv, dict):
+                    df = pd.DataFrame(ohlcv)
+                else:
+                    df = ohlcv
+                # Ensure we have enough data
+                if len(df) >= 52:
+                    # EMA (20)
+                    ema_20 = ta.trend.ema_indicator(df['close'], window=20).iloc[-1]
+                    # MA (50)
+                    ma_50 = ta.trend.sma_indicator(df['close'], window=50).iloc[-1]
+                else:
+                    ema_20 = ma_50 = 'N/A'
+            else:
+                ema_20 = ma_50 = 'N/A'
+            current_data["ema_20"] = ema_20
+            current_data["ma_50"] = ma_50
 
         # Get risk metrics
         risk_metrics = self.risk_manager.get_risk_metrics()
@@ -251,6 +284,8 @@ class AITradingBot:
             "macd": current_data.get("macd", "N/A"),
             "bb_upper": current_data.get("bb_upper", "N/A"),
             "bb_lower": current_data.get("bb_lower", "N/A"),
+            "ema_20": current_data.get("ema_20", "N/A"),
+            "ma_50": current_data.get("ma_50", "N/A"),
             "support_level": current_data.get("support_level", "N/A"),
             "resistance_level": current_data.get("resistance_level", "N/A"),
             "news_headlines": "Recent market analysis shows mixed signals",
@@ -364,11 +399,31 @@ class AITradingBot:
 
     async def _execute_real_trade(self, recommendation: TradingRecommendation, position_size: float) -> bool:
         """Execute real trade through Pionex API"""
-        # This would implement actual Pionex API calls
         self.logger.info(f"REAL TRADE: {recommendation.action} {position_size} {recommendation.trading_pair}")
-
-        # Placeholder for actual implementation
-        return False
+        try:
+            symbol = recommendation.trading_pair.replace("/", "_")
+            side = recommendation.action
+            # Determine order type and parameters
+            if hasattr(recommendation, 'order_type') and recommendation.order_type == "MARKET":
+                # MARKET order
+                # For market BUY, use amount (USDT to spend); for market SELL, use size (quantity)
+                if side == "BUY":
+                    order_result = await self._place_pionex_order(symbol, side, "MARKET", amount=position_size)
+                else:
+                    order_result = await self._place_pionex_order(symbol, side, "MARKET", size=position_size)
+            else:
+                # LIMIT order (default)
+                order_result = await self._place_pionex_order(
+                    symbol, side, "LIMIT", size=position_size, price=recommendation.entry_price, ioc=True)
+            if order_result:
+                self.logger.info(f"Order placed: {order_result}")
+                return True
+            else:
+                self.logger.error("Order placement failed.")
+                return False
+        except Exception as e:
+            self.logger.error(f"Exception in _execute_real_trade: {e}")
+            return False
 
     async def _manage_positions(self):
         """Monitor and manage open positions"""
@@ -415,6 +470,246 @@ class AITradingBot:
 
         except Exception as e:
             self.logger.error(f"Error logging performance metrics: {str(e)}")
+
+    async def _sync_balance_loop(self):
+        """Periodically fetch and update the real account balance from Pionex"""
+        if self.mode != "production":
+            return
+        while self.running:
+            try:
+                balance = await self._fetch_pionex_balance()
+                if balance is not None:
+                    self.risk_manager.update_balance(balance)
+            except Exception as e:
+                self.logger.error(f"Error syncing balance: {e}")
+            await asyncio.sleep(60)  # Sync every 60 seconds
+
+    async def _fetch_pionex_balance(self) -> float:
+        """Fetch account balance from Pionex REST API (USDT only)"""
+        api_key = os.getenv('TRADING_BOT_PIONEX_API_KEY')
+        api_secret = os.getenv('TRADING_BOT_PIONEX_SECRET_KEY')
+        if not api_key or not api_secret:
+            self.logger.error("Pionex API credentials not set for balance sync.")
+            return None
+        try:
+            url = "https://api.pionex.com/api/v1/account/balances"
+            path_url = "/api/v1/account/balances"
+            method = "GET"
+            timestamp = str(int(time.time() * 1000))
+            query = f"timestamp={timestamp}"
+            full_url = f"{url}?{query}"
+            string_to_sign = f"{method}{path_url}?{query}"
+            self.logger.info(f"[ALT2 SIGN] String to sign: {string_to_sign}")
+            signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                "PIONEX-KEY": api_key,
+                "PIONEX-SIGNATURE": signature,
+                "PIONEX-TIMESTAMP": timestamp
+            }
+            self.logger.info(f"Requesting balance: {full_url}")
+            self.logger.info(f"Headers: {headers}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(full_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        # Find USDT balance
+                        for asset in data.get("data", {}).get("balances", []):
+                            if asset.get("coin") == "USDT":
+                                return float(asset.get("free", 0))
+                        self.logger.warning("USDT balance not found in response.")
+                        self.logger.warning(f"Full balance response: {data}")
+                        return None
+                    else:
+                        self.logger.error(f"Failed to fetch balance: {resp.status}")
+                        return None
+        except Exception as e:
+            self.logger.error(f"Exception fetching Pionex balance: {e}")
+            return None
+
+    async def _place_pionex_order(self, symbol, side, order_type, size=None, price=None, amount=None, ioc=False):
+        api_key = os.getenv('TRADING_BOT_PIONEX_API_KEY')
+        api_secret = os.getenv('TRADING_BOT_PIONEX_SECRET_KEY')
+        if not api_key or not api_secret:
+            self.logger.error("Pionex API credentials not set for order placement.")
+            return None
+        try:
+            url = "https://api.pionex.com/api/v1/trade/order"
+            path_url = "/api/v1/trade/order"
+            method = "POST"
+            timestamp = str(int(time.time() * 1000))
+            client_order_id = str(uuid.uuid4())
+            body = {
+                "clientOrderId": client_order_id,
+                "symbol": symbol,
+                "side": side,
+                "type": order_type
+            }
+            if size is not None:
+                body["size"] = str(size)
+            if price is not None:
+                body["price"] = str(price)
+            if amount is not None:
+                body["amount"] = str(amount)
+            if ioc:
+                body["IOC"] = True
+
+            import json as pyjson
+            body_json = pyjson.dumps(body, separators=(',', ':'))  # No spaces, compact
+
+            # Signature: method + path_url + timestamp + body_json
+            string_to_sign = f"{method}{path_url}{timestamp}{body_json}"
+            signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                "PIONEX-KEY": api_key,
+                "PIONEX-SIGNATURE": signature,
+                "PIONEX-TIMESTAMP": timestamp,
+                "Content-Type": "application/json"
+            }
+            self.logger.info(f"Placing order: {body_json}")
+            self.logger.info(f"Headers: {headers}")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, data=body_json) as resp:
+                    resp_data = await resp.json()
+                    if resp.status == 200 and resp_data.get("result"):
+                        self.logger.info(f"Order placed successfully: {resp_data['data']}")
+                        return resp_data["data"]
+                    else:
+                        self.logger.error(f"Order placement failed: {resp.status} {resp_data}")
+                        return None
+        except Exception as e:
+            self.logger.error(f"Exception placing Pionex order: {e}")
+            return None
+
+    async def _place_pionex_mass_order(self, symbol, orders):
+        """
+        Place multiple LIMIT orders at once.
+        orders: list of dicts, each with keys: side, price, size, (optional) clientOrderId
+        """
+        api_key = os.getenv('TRADING_BOT_PIONEX_API_KEY')
+        api_secret = os.getenv('TRADING_BOT_PIONEX_SECRET_KEY')
+        if not api_key or not api_secret:
+            self.logger.error("Pionex API credentials not set for mass order placement.")
+            return None
+        try:
+            url = "https://api.pionex.com/api/v1/trade/massOrder"
+            path_url = "/api/v1/trade/massOrder"
+            method = "POST"
+            timestamp = str(int(time.time() * 1000))
+            import uuid
+            # Ensure all orders have clientOrderId and type LIMIT
+            for order in orders:
+                if "clientOrderId" not in order:
+                    order["clientOrderId"] = str(uuid.uuid4())
+                order["type"] = "LIMIT"  # Only LIMIT supported
+            body = {
+                "symbol": symbol,
+                "orders": orders
+            }
+            import json as pyjson
+            body_json = pyjson.dumps(body, separators=(',', ':'))
+            string_to_sign = f"{method}{path_url}{timestamp}{body_json}"
+            signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                "PIONEX-KEY": api_key,
+                "PIONEX-SIGNATURE": signature,
+                "PIONEX-TIMESTAMP": timestamp,
+                "Content-Type": "application/json"
+            }
+            self.logger.info(f"Placing mass order: {body_json}")
+            self.logger.info(f"Headers: {headers}")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, data=body_json) as resp:
+                    resp_data = await resp.json()
+                    if resp.status == 200 and resp_data.get("result"):
+                        self.logger.info(f"Mass order placed successfully: {resp_data['data']}")
+                        return resp_data["data"]
+                    else:
+                        self.logger.error(f"Mass order placement failed: {resp.status} {resp_data}")
+                        return None
+        except Exception as e:
+            self.logger.error(f"Exception placing Pionex mass order: {e}")
+            return None
+
+    async def _cancel_pionex_order(self, symbol, order_id):
+        """
+        Cancel a single order by symbol and orderId.
+        """
+        api_key = os.getenv('TRADING_BOT_PIONEX_API_KEY')
+        api_secret = os.getenv('TRADING_BOT_PIONEX_SECRET_KEY')
+        if not api_key or not api_secret:
+            self.logger.error("Pionex API credentials not set for order cancellation.")
+            return None
+        try:
+            url = "https://api.pionex.com/api/v1/trade/order"
+            path_url = "/api/v1/trade/order"
+            method = "DELETE"
+            timestamp = str(int(time.time() * 1000))
+            body = {
+                "symbol": symbol,
+                "orderId": order_id
+            }
+            import json as pyjson
+            body_json = pyjson.dumps(body, separators=(',', ':'))
+            string_to_sign = f"{method}{path_url}{timestamp}{body_json}"
+            signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                "PIONEX-KEY": api_key,
+                "PIONEX-SIGNATURE": signature,
+                "PIONEX-TIMESTAMP": timestamp,
+                "Content-Type": "application/json"
+            }
+            self.logger.info(f"Cancelling order: {body_json}")
+            self.logger.info(f"Headers: {headers}")
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(url, headers=headers, data=body_json) as resp:
+                    resp_data = await resp.json()
+                    if resp.status == 200 and resp_data.get("result"):
+                        self.logger.info(f"Order cancelled successfully: {order_id}")
+                        return True
+                    else:
+                        self.logger.error(f"Order cancellation failed: {resp.status} {resp_data}")
+                        return False
+        except Exception as e:
+            self.logger.error(f"Exception cancelling Pionex order: {e}")
+            return False
+
+    async def _get_pionex_open_orders(self, symbol):
+        """
+        Get all open orders for a symbol.
+        """
+        api_key = os.getenv('TRADING_BOT_PIONEX_API_KEY')
+        api_secret = os.getenv('TRADING_BOT_PIONEX_SECRET_KEY')
+        if not api_key or not api_secret:
+            self.logger.error("Pionex API credentials not set for open orders query.")
+            return None
+        try:
+            url = f"https://api.pionex.com/api/v1/trade/openOrders?symbol={symbol}"
+            path_url = "/api/v1/trade/openOrders"
+            method = "GET"
+            query = f"symbol={symbol}"
+            timestamp = str(int(time.time() * 1000))
+            # Signature: method + path_url + "?" + query + timestamp
+            string_to_sign = f"{method}{path_url}?{query}{timestamp}"
+            signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                "PIONEX-KEY": api_key,
+                "PIONEX-SIGNATURE": signature,
+                "PIONEX-TIMESTAMP": timestamp
+            }
+            self.logger.info(f"Getting open orders: {url}")
+            self.logger.info(f"Headers: {headers}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    resp_data = await resp.json()
+                    if resp.status == 200 and resp_data.get("result"):
+                        self.logger.info(f"Open orders fetched: {resp_data['data']['orders']}")
+                        return resp_data["data"]["orders"]
+                    else:
+                        self.logger.error(f"Open orders fetch failed: {resp.status} {resp_data}")
+                        return None
+        except Exception as e:
+            self.logger.error(f"Exception fetching open orders: {e}")
+            return None
 
     async def shutdown(self):
         """Graceful shutdown of the bot"""
