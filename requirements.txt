@@ -18,7 +18,7 @@ numpy>=1.24.0
 
 # Optional: Enhanced Features (uncomment if needed)
 # Technical Analysis
-# ta>=0.10.0
+ta>=0.10.0
 # 
 # Machine Learning (for advanced strategies)
 # scikit-learn>=1.2.0

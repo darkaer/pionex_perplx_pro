@@ -28,7 +28,7 @@ risk_management:
   volatility_threshold: 5.0
 
 ai_prompts:
-  confidence_threshold: 0.75  # More active trading threshold
+  confidence_threshold: 0.69  # More active trading threshold
   temperature: 0.3
 
 websocket:

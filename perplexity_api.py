@@ -101,6 +101,8 @@ class PerplexityAPI:
             macd=market_data.get("macd", "N/A"),
             bb_upper=market_data.get("bb_upper", "N/A"),
             bb_lower=market_data.get("bb_lower", "N/A"),
+            ema_20=market_data.get("ema_20", "N/A"),
+            ma_50=market_data.get("ma_50", "N/A"),
             support_level=market_data.get("support_level", "N/A"),
             resistance_level=market_data.get("resistance_level", "N/A"),
             news_headlines=market_data.get("news_headlines", "No recent news"),

@@ -34,6 +34,8 @@ ai_prompts:
     - RSI (14): {rsi}
     - MACD: {macd}
     - Bollinger Bands: {bb_upper}/{bb_lower}
+    - EMA (20): {ema_20}
+    - MA (50): {ma_50}
     - Support Level: ${support_level}
     - Resistance Level: ${resistance_level}
 

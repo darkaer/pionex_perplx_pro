@@ -202,7 +202,8 @@ class RiskManager:
 
         if should_close:
             self.logger.warning(f"Position {symbol} should be closed: {reason}")
-            # In a full implementation, this would trigger the actual closing
+            # Automatically close the position
+            self.close_position(symbol, position.current_price, reason)
 
     def close_position(self, symbol: str, exit_price: float, reason: str = "Manual close") -> Optional[Dict]:
         """Close a position and record the trade"""
@@ -374,3 +375,9 @@ class RiskManager:
         self.emergency_stop_triggered = False
         self.consecutive_losses = 0
         self.logger.warning("Emergency stop manually reset")
+
+    def update_balance(self, new_balance: float):
+        """Update the starting and daily balance for real-time syncing"""
+        self.starting_balance = new_balance
+        self.daily_start_balance = new_balance
+        self.logger.info(f"Risk manager balance updated to: ${new_balance:,.2f}")

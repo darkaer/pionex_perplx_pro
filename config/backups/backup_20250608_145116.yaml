@@ -1,0 +1,142 @@
+ai_prompts:
+  confidence_threshold: 0.75
+  market_analysis_prompt: 'Analyze the current market conditions for {trading_pair}
+    based on the following data:
+
+
+    Current Price: ${current_price}
+
+    24h Volume: {volume_24h}
+
+    24h Change: {change_24h}%
+
+
+    Technical Indicators:
+
+    - RSI (14): {rsi}
+
+    - MACD: {macd}
+
+    - Bollinger Bands: {bb_upper}/{bb_lower}
+
+    - EMA (20): {ema_20}
+
+    - MA (50): {ma_50}
+
+    - Support Level: ${support_level}
+
+    - Resistance Level: ${resistance_level}
+
+
+    Recent News Headlines:
+
+    {news_headlines}
+
+
+    Portfolio Status:
+
+    - Available Balance: ${available_balance}
+
+    - Current Positions: {open_positions}
+
+    - Today''s P&L: {daily_pnl}%
+
+
+    Provide a trading recommendation considering all factors above.
+
+    '
+  max_response_tokens: 1000
+  risk_assessment_prompt: 'Evaluate the risk profile for the following trading scenario:
+
+
+    Proposed Action: {action}
+
+    Trading Pair: {trading_pair}
+
+    Position Size: {position_size}% of portfolio
+
+    Leverage: {leverage}x
+
+    Current Market Volatility: {volatility}%
+
+
+    Account Status:
+
+    - Daily Losses: {daily_losses}%
+
+    - Consecutive Losses: {consecutive_losses}
+
+    - Max Drawdown: {max_drawdown}%
+
+    - Open Positions: {open_positions_count}
+
+
+    Assess if this trade aligns with risk management guidelines and suggest adjustments
+    if needed.
+
+    '
+  system_prompt: "You are a professional cryptocurrency trading AI assistant with\
+    \ expertise in technical analysis, \nrisk management, and market psychology. Your\
+    \ primary goal is to generate profitable trading \nrecommendations while maintaining\
+    \ strict risk management protocols.\n\nKey principles:\n- Always prioritize capital\
+    \ preservation over aggressive gains\n- Provide clear confidence scores (0.0 to\
+    \ 1.0) for all recommendations\n- Include specific entry, stop-loss, and take-profit\
+    \ levels\n- Consider current market volatility and trend direction\n- Factor in\
+    \ recent news and market sentiment\n\nResponse format should include:\n- Action:\
+    \ BUY/SELL/HOLD\n- Confidence: 0.0-1.0\n- Entry Price: Specific price level\n\
+    - Stop Loss: Risk management level\n- Take Profit: Target profit level\n- Reasoning:\
+    \ Brief technical and fundamental analysis\n- Risk Level: LOW/MEDIUM/HIGH\n"
+  temperature: 0.3
+api:
+  perplexity_api_key: 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
+  perplexity_model: sonar-pro
+  pionex_api_key: 9t4hKPdj75H21Tm2fFdpjddckRp4jSNc9mnqQVHxXvfvpKmibnh6YLGgmMX4rJiarR
+  pionex_base_url: https://api.pionex.com
+  pionex_secret_key: 6vbkXqIOUeZWxryQjK6BOcVi3DPoYli3HGF2w94XypoFWhMIK7eiCG3jVdpq1Bff
+  pionex_ws_url: wss://ws.pionex.com/ws
+logging:
+  backup_count: 5
+  console_enabled: false
+  file_enabled: true
+  file_path: logs/trading_bot.log
+  level: INFO
+  max_file_size_mb: 10
+notifications:
+  discord_webhook_url: your_discord_webhook_url_here
+  email_enabled: false
+  email_password: ''
+  email_port: 587
+  email_recipients: []
+  email_smtp_server: ''
+  email_username: ''
+risk_management:
+  emergency_stop_enabled: true
+  max_consecutive_losses: 3
+  max_daily_loss_percentage: 0.4
+  max_drawdown_percentage: 15.0
+  position_timeout_hours: 24
+  volatility_threshold: 5.0
+trading:
+  default_leverage: 15.0
+  max_position_size: 0.15
+  mode: production
+  order_timeout_minutes: 45
+  stop_loss_percentage: 3.5
+  take_profit_percentage: 15.0
+  trading_pairs:
+  - BTC/USDT
+  - ETH/USDT
+  - BNB/USDT
+  - SOL/USDT
+  - XRP/USDT
+  - DOGE/USDT
+  - DOT/USDT
+  - SUI/USDT
+  - SHIB/USDT
+websocket:
+  mock_url: ws://localhost:8080/mock
+  ping_interval: 30
+  production_url: wss://ws.pionex.com/ws
+  public_url: wss://ws.pionex.com/ws/Pub
+  reconnect_attempts: 5
+  reconnect_delay: 5

@@ -499,15 +499,15 @@ class AITradingBot:
             query = f"timestamp={timestamp}"
             full_url = f"{url}?{query}"
             string_to_sign = f"{method}{path_url}?{query}"
-            self.logger.info(f"[ALT2 SIGN] String to sign: {string_to_sign}")
+            # self.logger.info(f"[ALT2 SIGN] String to sign: {string_to_sign}")
             signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
             headers = {
                 "PIONEX-KEY": api_key,
                 "PIONEX-SIGNATURE": signature,
                 "PIONEX-TIMESTAMP": timestamp
             }
-            self.logger.info(f"Requesting balance: {full_url}")
-            self.logger.info(f"Headers: {headers}")
+            # self.logger.info(f"Requesting balance: {full_url}")
+            # self.logger.info(f"Headers: {headers}")
             async with aiohttp.ClientSession() as session:
                 async with session.get(full_url, headers=headers) as resp:
                     if resp.status == 200:
@@ -556,8 +556,12 @@ class AITradingBot:
             import json as pyjson
             body_json = pyjson.dumps(body, separators=(',', ':'))  # No spaces, compact
 
-            # Signature: method + path_url + timestamp + body_json
-            string_to_sign = f"{method}{path_url}{timestamp}{body_json}"
+            # Add timestamp as query param
+            query = f"timestamp={timestamp}"
+            full_url = f"{url}?{query}"
+            # Signature: method + path_url + "?" + query + body_json
+            string_to_sign = f"{method}{path_url}?{query}{body_json}"
+            self.logger.info(f"[ORDER SIGN] String to sign: {string_to_sign}")
             signature = hmac.new(api_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
             headers = {
                 "PIONEX-KEY": api_key,
@@ -566,9 +570,10 @@ class AITradingBot:
                 "Content-Type": "application/json"
             }
             self.logger.info(f"Placing order: {body_json}")
+            self.logger.info(f"Requesting order: {full_url}")
             self.logger.info(f"Headers: {headers}")
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, data=body_json) as resp:
+                async with session.post(full_url, headers=headers, data=body_json) as resp:
                     resp_data = await resp.json()
                     if resp.status == 200 and resp_data.get("result"):
                         self.logger.info(f"Order placed successfully: {resp_data['data']}")

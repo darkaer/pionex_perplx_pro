@@ -14,312 +14,272 @@ from typing import Dict, Any, Optional, Callable
 from urllib.parse import urlencode
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidURI
+import os
+
+logger = logging.getLogger(__name__)
 
 class PionexWebSocketHandler:
-    """Handles WebSocket connections to Pionex API with authentication"""
+    """
+    Proper Pionex WebSocket handler with authentication
+    Fixes HTTP 200 error by implementing correct authentication
+    """
 
-    def __init__(self, config, message_handler: Callable[[Dict], None] = None):
-        self.config = config
-        self.message_handler = message_handler
-        self.websocket = None
+    def __init__(self, api_key: str = None, api_secret: str = None, mode: str = "production"):
+        # Allow API key/secret from env if not provided
+        self.api_key = api_key or os.getenv('PIONEX_API_KEY')
+        self.api_secret = api_secret or os.getenv('PIONEX_API_SECRET')
+        self.mode = mode
+        self.websocket: Optional[websockets.WebSocketServerProtocol] = None
         self.is_connected = False
-        self.is_authenticated = False
-        self.reconnect_count = 0
-        self.logger = logging.getLogger(__name__)
+        self.subscriptions = set()
 
-        # Message handlers for different message types
-        self.handlers = {
-            'ticker': self._handle_ticker,
-            'trade': self._handle_trade,
-            'balance': self._handle_balance,
-            'order': self._handle_order,
-            'position': self._handle_position,
-            'error': self._handle_error
+    def generate_authenticated_url(self) -> str:
+        """
+        Generate properly authenticated Pionex WebSocket URL
+        This fixes the HTTP 200 error by including required authentication parameters
+        """
+        if self.mode == "testing":
+            # For testing mode, use public stream (no auth required)
+            return "wss://ws.pionex.com/wsPub"
+
+        # Production mode requires authentication
+        if not self.api_key or not self.api_secret:
+            raise ValueError("API credentials required for production mode")
+
+        # Step 1: Get current timestamp in milliseconds
+        timestamp = str(int(time.time() * 1000))
+
+        # Step 2: Create query parameters
+        params = {
+            'key': self.api_key,
+            'timestamp': timestamp
         }
 
-    async def connect(self, endpoint_type: str = "private"):
-        """Connect to appropriate WebSocket endpoint"""
+        # Step 3: Sort parameters by key in ascending ASCII order
+        sorted_params = sorted(params.items())
+        query_string = urlencode(sorted_params)
+
+        # Step 4: Create PATH_URL
+        path = "/ws"
+        path_url = f"{path}?{query_string}"
+
+        # Step 5: Concatenate "websocket_auth"
+        message_to_sign = f"{path_url}websocket_auth"
+
+        # Step 6: Generate HMAC SHA256 signature
+        signature = hmac.new(
+            self.api_secret.encode('utf-8'), 
+            message_to_sign.encode('utf-8'), 
+            hashlib.sha256
+        ).hexdigest()
+
+        # Step 7: Create final authenticated URL
+        authenticated_url = f"wss://ws.pionex.com/ws?key={self.api_key}&timestamp={timestamp}&signature={signature}"
+
+        logger.info(f"Generated authenticated WebSocket URL")
+        logger.debug(f"Message signed: {message_to_sign}")
+        logger.debug(f"Signature: {signature}")
+
+        return authenticated_url
+
+    async def connect(self) -> bool:
+        """
+        Connect to Pionex WebSocket with proper authentication
+        Returns True if connection successful, False otherwise
+        """
         try:
-            url = self._get_websocket_url(endpoint_type)
+            # Generate authenticated URL
+            ws_url = self.generate_authenticated_url()
+            logger.info(f"Connecting to WebSocket URL: {ws_url}")
 
-            if self.config.trading.mode == "testing":
-                await self._connect_mock(url)
-            else:
-                await self._connect_production(url, endpoint_type)
-
-        except Exception as e:
-            self.logger.error(f"WebSocket connection failed: {str(e)}")
-            await self._handle_reconnection()
-
-    def _get_websocket_url(self, endpoint_type: str) -> str:
-        """Get appropriate WebSocket URL based on mode and endpoint type"""
-        if self.config.trading.mode == "testing":
-            return self.config.websocket.mock_url
-
-        if endpoint_type == "public":
-            return self.config.websocket.public_url
-        return self.config.websocket.production_url
-
-    async def _connect_mock(self, url: str):
-        """Connect to mock WebSocket for testing"""
-        self.logger.info("Connecting to mock WebSocket endpoint...")
-
-        try:
-            # For testing, create a mock WebSocket that simulates responses
-            self.websocket = MockWebSocket()
-            self.is_connected = True
-            self.is_authenticated = True
-            self.logger.info("Connected to mock WebSocket successfully")
-
-            # Start mock data generation
-            asyncio.create_task(self._generate_mock_data())
-
-        except Exception as e:
-            self.logger.error(f"Mock WebSocket connection failed: {str(e)}")
-            raise
-
-    async def _connect_production(self, url: str, endpoint_type: str):
-        """Connect to production Pionex WebSocket"""
-        self.logger.info("Connecting to Pionex WebSocket...")
-
-        try:
-            # Add authentication parameters for private endpoints
-            if endpoint_type == "private":
-                url = self._add_auth_params(url)
-
-            # Connect to WebSocket
+            # Connect with proper headers
             self.websocket = await websockets.connect(
-                url,
-                ping_interval=self.config.websocket.ping_interval,
-                ping_timeout=10,
+                ws_url,
+                ping_interval=30,  # Send ping every 30 seconds
+                ping_timeout=10,   # Wait 10 seconds for pong
                 close_timeout=10
             )
 
             self.is_connected = True
-            self.logger.info("Connected to Pionex WebSocket successfully")
+            logger.info("✅ WebSocket connection established successfully!")
 
-            # Authenticate if required
-            if endpoint_type == "private":
-                await self._authenticate()
+            # Start message handler
+            asyncio.create_task(self._message_handler())
+
+            return True
+
+        except websockets.exceptions.InvalidStatusCode as e:
+            if e.status_code == 200:
+                logger.error("❌ HTTP 200 Error - Authentication failed!")
+                logger.error("Check your API credentials and signature generation")
+            else:
+                logger.error(f"❌ WebSocket connection failed with status {e.status_code}: {e}")
+            return False
 
         except Exception as e:
-            self.logger.error(f"Production WebSocket connection failed: {str(e)}")
-            raise
+            logger.error(f"❌ WebSocket connection failed: {e}")
+            return False
 
-    def _add_auth_params(self, url: str) -> str:
-        """Add authentication parameters to WebSocket URL"""
-        timestamp = str(int(time.time() * 1000))
+    async def disconnect(self):
+        """Gracefully disconnect from WebSocket"""
+        if self.websocket and self.is_connected:
+            try:
+                await self.websocket.close()
+                logger.info("WebSocket disconnected")
+            except Exception as e:
+                logger.error(f"Error during disconnect: {e}")
+            finally:
+                self.is_connected = False
+                self.websocket = None
 
-        # Create signature for authentication
-        signature = self._generate_signature(
-            method="GET",
-            path="/ws",
-            query_params={},
-            timestamp=timestamp
-        )
+    async def subscribe(self, topic: str, symbol: str):
+        """
+        Subscribe to a topic for a specific symbol
 
-        # Add authentication parameters
-        auth_params = {
-            'apiKey': self.config.api.pionex_api_key,
-            'timestamp': timestamp,
-            'signature': signature
+        Args:
+            topic: TRADE, DEPTH, ORDER, or FILL
+            symbol: Trading pair (e.g., "BTC_USDT")
+        """
+        if not self.is_connected:
+            logger.error("Not connected to WebSocket")
+            return False
+
+        subscription_msg = {
+            "op": "SUBSCRIBE",
+            "topic": topic,
+            "symbol": symbol
         }
-
-        # Append to URL
-        separator = '&' if '?' in url else '?'
-        return f"{url}{separator}{urlencode(auth_params)}"
-
-    def _generate_signature(self, method: str, path: str, query_params: Dict, timestamp: str) -> str:
-        """Generate HMAC SHA256 signature for Pionex API"""
-        # Prepare the string to sign
-        query_string = urlencode(sorted(query_params.items()))
-        string_to_sign = f"{method}{path}{query_string}{timestamp}"
-
-        # Generate signature
-        signature = hmac.new(
-            self.config.api.pionex_secret_key.encode('utf-8'),
-            string_to_sign.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-
-        return signature
-
-    async def _authenticate(self):
-        """Send authentication message for private WebSocket"""
-        auth_message = {
-            "method": "LOGIN",
-            "params": {
-                "apiKey": self.config.api.pionex_api_key,
-                "timestamp": str(int(time.time() * 1000))
-            },
-            "id": 1
-        }
-
-        await self.send_message(auth_message)
-
-        # Wait for authentication response
-        auth_response = await self.websocket.recv()
-        response_data = json.loads(auth_response)
-
-        if response_data.get("result", {}).get("status") == "success":
-            self.is_authenticated = True
-            self.logger.info("WebSocket authentication successful")
-        else:
-            raise Exception(f"Authentication failed: {response_data}")
-
-    async def send_message(self, message: Dict):
-        """Send message through WebSocket"""
-        if not self.is_connected or not self.websocket:
-            raise Exception("WebSocket not connected")
 
         try:
-            message_str = json.dumps(message)
-            await self.websocket.send(message_str)
-            self.logger.debug(f"Sent message: {message_str}")
-
+            await self.websocket.send(json.dumps(subscription_msg))
+            self.subscriptions.add(f"{topic}:{symbol}")
+            logger.info(f"Subscribed to {topic} for {symbol}")
+            return True
         except Exception as e:
-            self.logger.error(f"Failed to send message: {str(e)}")
-            raise
+            logger.error(f"Failed to subscribe to {topic}:{symbol} - {e}")
+            return False
 
-    async def listen(self):
-        """Listen for incoming messages"""
-        while self.is_connected:
-            try:
-                if self.config.trading.mode == "testing":
-                    # Mock listening - messages are generated automatically
-                    await asyncio.sleep(1)
-                    continue
+    async def unsubscribe(self, topic: str, symbol: str):
+        """Unsubscribe from a topic"""
+        if not self.is_connected:
+            logger.error("Not connected to WebSocket")
+            return False
 
-                # Real WebSocket listening
-                message = await self.websocket.recv()
+        unsubscribe_msg = {
+            "op": "UNSUBSCRIBE", 
+            "topic": topic,
+            "symbol": symbol
+        }
+
+        try:
+            await self.websocket.send(json.dumps(unsubscribe_msg))
+            self.subscriptions.discard(f"{topic}:{symbol}")
+            logger.info(f"Unsubscribed from {topic} for {symbol}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to unsubscribe from {topic}:{symbol} - {e}")
+            return False
+
+    async def _message_handler(self):
+        """Handle incoming WebSocket messages"""
+        try:
+            async for message in self.websocket:
                 await self._process_message(message)
-
-            except ConnectionClosed:
-                self.logger.warning("WebSocket connection closed")
-                self.is_connected = False
-                await self._handle_reconnection()
-                break
-
-            except Exception as e:
-                self.logger.error(f"Error receiving message: {str(e)}")
-                await asyncio.sleep(1)
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("WebSocket connection closed")
+            self.is_connected = False
+        except Exception as e:
+            logger.error(f"Message handler error: {e}")
+            self.is_connected = False
 
     async def _process_message(self, message: str):
-        """Process incoming WebSocket message"""
+        """Process individual messages"""
         try:
             data = json.loads(message)
-            self.logger.debug(f"Received message: {message}")
 
-            # Determine message type and handle accordingly
-            message_type = self._determine_message_type(data)
+            # Handle different message types
+            if data.get("type") == "PING":
+                # Respond to server ping
+                pong_response = {"type": "PONG", "timestamp": int(time.time() * 1000)}
+                await self.websocket.send(json.dumps(pong_response))
+                logger.debug("Responded to PING with PONG")
 
-            if message_type in self.handlers:
-                await self.handlers[message_type](data)
+            elif data.get("op") in ["SUBSCRIBE", "UNSUBSCRIBE"]:
+                # Subscription confirmation
+                logger.info(f"Subscription response: {data}")
 
-            # Call external message handler if provided
-            if self.message_handler:
-                self.message_handler(data)
+            elif data.get("topic"):
+                # Market data or account data
+                await self._handle_data_message(data)
 
+            else:
+                logger.debug(f"Unknown message type: {data}")
+
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON message: {message}")
         except Exception as e:
-            self.logger.error(f"Error processing message: {str(e)}")
+            logger.error(f"Error processing message: {e}")
 
-    def _determine_message_type(self, data: Dict) -> str:
-        """Determine the type of incoming message"""
-        if 'channel' in data:
-            return data['channel'].split('.')[0]  # e.g., 'ticker.BTC-USDT' -> 'ticker'
-        elif 'method' in data:
-            return data['method'].lower()
-        elif 'error' in data:
-            return 'error'
+    async def _handle_data_message(self, data: Dict[str, Any]):
+        """Handle market data and account data messages"""
+        topic = data.get("topic")
+        symbol = data.get("symbol")
+
+        if topic == "TRADE":
+            logger.info(f"Trade data for {symbol}: {data.get('data')}")
+        elif topic == "DEPTH":
+            logger.info(f"Depth data for {symbol}: {data.get('data')}")
+        elif topic == "ORDER":
+            logger.info(f"Order update: {data.get('data')}")
+        elif topic == "FILL":
+            logger.info(f"Fill update: {data.get('data')}")
         else:
-            return 'unknown'
+            logger.info(f"Data message: {data}")
 
-    async def _handle_ticker(self, data: Dict):
-        """Handle ticker update messages"""
-        self.logger.debug(f"Ticker update: {data}")
+# Example usage and testing function
+async def test_websocket_connection():
+    """Test the WebSocket connection with proper authentication"""
+    # Get API credentials from environment variables
+    api_key = os.getenv('PIONEX_API_KEY')
+    api_secret = os.getenv('PIONEX_API_SECRET')
 
-    async def _handle_trade(self, data: Dict):
-        """Handle trade execution messages"""
-        self.logger.info(f"Trade executed: {data}")
+    if not api_key or not api_secret:
+        print("❌ API credentials not found in environment variables")
+        print("Set PIONEX_API_KEY and PIONEX_API_SECRET environment variables")
+        return
 
-    async def _handle_balance(self, data: Dict):
-        """Handle balance update messages"""
-        self.logger.info(f"Balance update: {data}")
+    # Create WebSocket handler
+    ws_handler = PionexWebSocketHandler(api_key, api_secret, mode="production")
 
-    async def _handle_order(self, data: Dict):
-        """Handle order status messages"""
-        self.logger.info(f"Order update: {data}")
+    try:
+        # Test connection
+        print("Testing WebSocket connection...")
+        success = await ws_handler.connect()
 
-    async def _handle_position(self, data: Dict):
-        """Handle position update messages"""
-        self.logger.info(f"Position update: {data}")
+        if success:
+            print("✅ Connection successful! Testing subscriptions...")
 
-    async def _handle_error(self, data: Dict):
-        """Handle error messages"""
-        self.logger.error(f"WebSocket error: {data}")
+            # Test subscription to market data
+            await ws_handler.subscribe("TRADE", "BTC_USDT")
 
-    async def _handle_reconnection(self):
-        """Handle WebSocket reconnection logic"""
-        if self.reconnect_count >= self.config.websocket.reconnect_attempts:
-            self.logger.error("Maximum reconnection attempts reached")
-            return
+            # Keep connection alive for 10 seconds to receive messages
+            await asyncio.sleep(10)
 
-        self.reconnect_count += 1
-        wait_time = self.config.websocket.reconnect_delay * self.reconnect_count
+            # Clean disconnect
+            await ws_handler.disconnect()
+            print("✅ Test completed successfully")
+        else:
+            print("❌ Connection failed - check logs above for details")
 
-        self.logger.info(f"Reconnecting in {wait_time} seconds (attempt {self.reconnect_count})")
-        await asyncio.sleep(wait_time)
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
 
-        try:
-            await self.connect()
-            self.reconnect_count = 0  # Reset on successful connection
-        except Exception as e:
-            self.logger.error(f"Reconnection failed: {str(e)}")
+if __name__ == "__main__":
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
-    async def _generate_mock_data(self):
-        """Generate mock data for testing"""
-        while self.is_connected and self.config.trading.mode == "testing":
-            # Generate mock ticker data
-            mock_ticker = {
-                "channel": "ticker.BTC-USDT",
-                "data": {
-                    "symbol": "BTC-USDT",
-                    "price": 45000 + (time.time() % 1000 - 500),  # Fluctuating price
-                    "volume": 1234.56,
-                    "change": 2.5
-                }
-            }
-
-            if self.message_handler:
-                self.message_handler(mock_ticker)
-
-            await asyncio.sleep(5)  # Send mock data every 5 seconds
-
-    async def close(self):
-        """Close WebSocket connection"""
-        self.is_connected = False
-
-        if self.websocket and self.config.trading.mode != "testing":
-            await self.websocket.close()
-
-        self.logger.info("WebSocket connection closed")
-
-
-class MockWebSocket:
-    """Mock WebSocket for testing purposes"""
-
-    def __init__(self):
-        self.closed = False
-
-    async def send(self, message: str):
-        """Mock send method"""
-        pass
-
-    async def recv(self) -> str:
-        """Mock receive method"""
-        await asyncio.sleep(1)
-        return json.dumps({"status": "mock_response"})
-
-    async def close(self):
-        """Mock close method"""
-        self.closed = True
+    # Run test
+    asyncio.run(test_websocket_connection())
