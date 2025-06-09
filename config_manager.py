@@ -20,6 +20,7 @@ class AIPromptConfig:
     confidence_threshold: float = 0.7
     max_response_tokens: int = 1000
     temperature: float = 0.3
+    analysis_interval: int = 300  # Default analysis interval in seconds
 
 @dataclass
 class TradingConfig:
@@ -186,6 +187,7 @@ class ConfigManager:
             f"{self.env_prefix}_LOG_LEVEL": ["logging", "level"],
             f"{self.env_prefix}_WS_PING_INTERVAL": ["websocket", "ping_interval"],
             f"{self.env_prefix}_WS_RECONNECT_ATTEMPTS": ["websocket", "reconnect_attempts"],
+            f"{self.env_prefix}_ANALYSIS_INTERVAL": ["ai_prompts", "analysis_interval"],
         }
 
         for env_var, path in env_mappings.items():

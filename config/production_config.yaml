@@ -4,15 +4,15 @@
 trading:
   mode: "production"
   trading_pairs:
-    - "BTC/USDT"
-    - "ETH/USDT"
-    - "BNB/USDT"
-    - "SOL/USDT"
-    - "XRP/USDT"
-    - "DOGE/USDT"
-    - "DOT/USDT"
-    - "SUI/USDT"
-    - "SHIB/USDT"
+    - "BTC_USDT_PERP"
+    - "ETH_USDT_PERP"
+    - "BNB_USDT_PERP"
+    - "SOL_USDT_PERP"
+    - "XRP_USDT_PERP"
+    - "DOGE_USDT_PERP"
+    - "DOT_USDT_PERP"
+    - "SUI_USDT_PERP"
+    - "SHIB_USDT_PERP"
   max_position_size: 0.15    # Larger position size for profits
   default_leverage: 15.0      # Moderate leverage
   stop_loss_percentage: 3.5

@@ -90,7 +90,7 @@ class PionexWebSocketHandler:
         try:
             # Generate authenticated URL
             ws_url = self.generate_authenticated_url()
-            logger.info(f"Connecting to WebSocket URL: {ws_url}")
+            # logger.info(f"Connecting to WebSocket URL: {ws_url}")
 
             # Connect with proper headers
             self.websocket = await websockets.connect(

@@ -53,7 +53,6 @@ class AITradingBot:
         self.running = False
         self.last_analysis_time = datetime.now()
         self.market_data: Dict[str, Any] = {}
-        self.analysis_interval = 300  # 5 minutes
 
         # Performance tracking
         self.start_time = datetime.now()
@@ -83,6 +82,10 @@ class AITradingBot:
 
             # Load configuration
             self.config = self.config_manager.load_config(self.mode)
+
+            # Set analysis interval from config
+            self.analysis_interval = getattr(self.config.ai_prompts, 'analysis_interval', 300)
+            self.logger.info(f"Analysis interval set to {self.analysis_interval} seconds.")
 
             # Initialize components
             self.perplexity_api = PerplexityAPI(self.config)
