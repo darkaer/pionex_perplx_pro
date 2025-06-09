@@ -28,7 +28,7 @@ class TradingConfig:
     trading_pairs: List[str] = field(default_factory=lambda: ["BTC/USDT"])
     max_position_size: float = 0.1  # 10% of balance
     default_leverage: float = 1.0
-    stop_loss_percentage: float = 2.0
+    stop_loss_percentage: float = 4.0
     take_profit_percentage: float = 4.0
     order_timeout_minutes: int = 30
 
@@ -163,12 +163,29 @@ class ConfigManager:
     def _apply_env_overrides(self, config: Dict) -> Dict:
         """Apply environment variable overrides"""
         env_mappings = {
+            # API credentials
             f"{self.env_prefix}_PERPLEXITY_API_KEY": ["api", "perplexity_api_key"],
             f"{self.env_prefix}_PIONEX_API_KEY": ["api", "pionex_api_key"],
             f"{self.env_prefix}_PIONEX_SECRET_KEY": ["api", "pionex_secret_key"],
+            # Trading config overrides
             f"{self.env_prefix}_TRADING_MODE": ["trading", "mode"],
             f"{self.env_prefix}_MAX_DAILY_LOSS": ["risk_management", "max_daily_loss_percentage"],
+            f"{self.env_prefix}_MAX_POSITION_SIZE": ["trading", "max_position_size"],
+            f"{self.env_prefix}_DEFAULT_LEVERAGE": ["trading", "default_leverage"],
+            f"{self.env_prefix}_STOP_LOSS": ["trading", "stop_loss_percentage"],
+            f"{self.env_prefix}_TAKE_PROFIT": ["trading", "take_profit_percentage"],
+            # Risk management overrides
+            f"{self.env_prefix}_MAX_CONSECUTIVE_LOSSES": ["risk_management", "max_consecutive_losses"],
+            f"{self.env_prefix}_MAX_DRAWDOWN": ["risk_management", "max_drawdown_percentage"],
+            f"{self.env_prefix}_POSITION_TIMEOUT": ["risk_management", "position_timeout_hours"],
+            f"{self.env_prefix}_EMERGENCY_STOP": ["risk_management", "emergency_stop_enabled"],
+            # Notification settings
             f"{self.env_prefix}_DISCORD_WEBHOOK": ["notifications", "discord_webhook_url"],
+            # Advanced settings
+            f"{self.env_prefix}_PERPLEXITY_MODEL": ["api", "perplexity_model"],
+            f"{self.env_prefix}_LOG_LEVEL": ["logging", "level"],
+            f"{self.env_prefix}_WS_PING_INTERVAL": ["websocket", "ping_interval"],
+            f"{self.env_prefix}_WS_RECONNECT_ATTEMPTS": ["websocket", "reconnect_attempts"],
         }
 
         for env_var, path in env_mappings.items():
