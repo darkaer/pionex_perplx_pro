@@ -26,6 +26,7 @@ class AIPromptConfig:
 class TradingConfig:
     """Trading parameters and settings"""
     mode: str = "testing"  # testing or production
+    market_type: str = "perpetual"  # spot or perpetual
     trading_pairs: List[str] = field(default_factory=lambda: ["BTC/USDT"])
     max_position_size: float = 0.1  # 10% of balance
     default_leverage: float = 1.0

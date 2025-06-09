@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 import json
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, NamedTuple
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -23,6 +23,7 @@ class TradingRecommendation:
     risk_level: str  # LOW, MEDIUM, HIGH
     timestamp: datetime
     trading_pair: str
+    order_type: Optional[str] = None
 
 class PerplexityAPI:
     """Interface to Perplexity Labs API for trading analysis"""
@@ -92,24 +93,28 @@ class PerplexityAPI:
         prompt_template = self.config.ai_prompts.market_analysis_prompt
 
         # Fill in the template with actual market data
-        filled_prompt = prompt_template.format(
-            trading_pair=market_data.get("trading_pair", "BTC/USDT"),
-            current_price=market_data.get("current_price", 0),
-            volume_24h=market_data.get("volume_24h", 0),
-            change_24h=market_data.get("change_24h", 0),
+        trading_input = dict(
+            trading_pair=market_data.get("trading_pair", "N/A"),
+            current_price=market_data.get("current_price", "N/A"),
+            volume_24h=market_data.get("volume_24h", "N/A"),
+            change_24h=market_data.get("change_24h", "N/A"),
             rsi=market_data.get("rsi", "N/A"),
             macd=market_data.get("macd", "N/A"),
             bb_upper=market_data.get("bb_upper", "N/A"),
             bb_lower=market_data.get("bb_lower", "N/A"),
+            ema_9=market_data.get("ema_9", "N/A"),
             ema_20=market_data.get("ema_20", "N/A"),
             ma_50=market_data.get("ma_50", "N/A"),
+            vwap=market_data.get("vwap", "N/A"),
             support_level=market_data.get("support_level", "N/A"),
             resistance_level=market_data.get("resistance_level", "N/A"),
-            news_headlines=market_data.get("news_headlines", "No recent news"),
-            available_balance=market_data.get("available_balance", 0),
-            open_positions=market_data.get("open_positions", 0),
-            daily_pnl=market_data.get("daily_pnl", 0)
+            news_headlines=market_data.get("news_headlines", "N/A"),
+            available_balance=market_data.get("available_balance", "N/A"),
+            open_positions=market_data.get("open_positions", "N/A"),
+            daily_pnl=market_data.get("daily_pnl", "N/A")
         )
+
+        filled_prompt = prompt_template.format(**trading_input)
 
         return filled_prompt
 
@@ -182,7 +187,8 @@ class PerplexityAPI:
                 reasoning=recommendation.get("reasoning", "No reasoning provided"),
                 risk_level=recommendation.get("risk_level", "MEDIUM"),
                 timestamp=datetime.now(),
-                trading_pair=trading_pair
+                trading_pair=trading_pair,
+                order_type=recommendation.get("order_type", "LIMIT")
             )
 
         except Exception as e:
@@ -197,7 +203,8 @@ class PerplexityAPI:
                 reasoning=f"Error parsing AI response: {str(e)}",
                 risk_level="HIGH",
                 timestamp=datetime.now(),
-                trading_pair=trading_pair
+                trading_pair=trading_pair,
+                order_type="LIMIT"
             )
 
     def _extract_recommendation_fields(self, content: str) -> Dict[str, Any]:
@@ -212,7 +219,7 @@ class PerplexityAPI:
                 key = key.strip().lower().replace(' ', '_')
                 value = value.strip()
 
-                if key in ['action', 'confidence', 'entry_price', 'stop_loss', 'take_profit', 'reasoning', 'risk_level']:
+                if key in ['action', 'confidence', 'entry_price', 'stop_loss', 'take_profit', 'reasoning', 'risk_level', 'order_type']:
                     fields[key] = value
 
         # Handle common variations
@@ -296,7 +303,8 @@ class PerplexityAPI:
             reasoning=f"Mock {action} recommendation based on simulated analysis",
             risk_level=random.choice(["LOW", "MEDIUM"]),
             timestamp=datetime.now(),
-            trading_pair=market_data.get("trading_pair", "BTC/USDT")
+            trading_pair=market_data.get("trading_pair", "BTC/USDT"),
+            order_type="LIMIT"
         )
 
         self.logger.info(f"Generated mock recommendation: {action} (confidence: {mock_rec.confidence})")

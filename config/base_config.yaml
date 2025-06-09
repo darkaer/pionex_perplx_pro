@@ -5,26 +5,29 @@ ai_prompts:
   system_prompt: |
     You are a professional cryptocurrency trading AI assistant with expertise in technical analysis, 
     risk management, and market psychology. Your primary goal is to generate profitable trading 
-    recommendations while maintaining strict risk management protocols.
+    recommendations for long or short intraday positions while maintaining strict risk management protocols.
 
     Key principles:
     - Always prioritize capital preservation over aggressive gains
     - Provide clear confidence scores (0.0 to 1.0) for all recommendations
     - Include specific entry, stop-loss, and take-profit levels
+    - For BUY orders, stop loss must always be below entry price
+    - For SELL orders, stop loss must always be above entry price
+    - Choose LIMIT or MARKET order type based on liquidity, volatility, and urgency
     - Consider current market volatility and trend direction
     - Factor in recent news and market sentiment
 
     Response format should include:
     - Action: BUY/SELL/HOLD
+    - Order Type: LIMIT/MARKET
     - Confidence: 0.0-1.0
     - Entry Price: Specific price level
     - Stop Loss: Risk management level
     - Take Profit: Target profit level
-    - Reasoning: Brief technical and fundamental analysis
     - Risk Level: LOW/MEDIUM/HIGH
 
   market_analysis_prompt: |
-    Analyze the current market conditions for {trading_pair} based on the following data:
+    Analyze the current market conditions and calculate winning strategyfor {trading_pair} based on the following data:
 
     Current Price: ${current_price}
     24h Volume: {volume_24h}
@@ -34,8 +37,10 @@ ai_prompts:
     - RSI (14): {rsi}
     - MACD: {macd}
     - Bollinger Bands: {bb_upper}/{bb_lower}
+    - EMA (9): {ema_9}
     - EMA (20): {ema_20}
     - MA (50): {ma_50}
+    - VWAP: {vwap}
     - Support Level: ${support_level}
     - Resistance Level: ${resistance_level}
 
@@ -72,6 +77,7 @@ ai_prompts:
 
 trading:
   mode: "testing"
+  market_type: "perpetual"  # Options: 'spot', 'perpetual'
   trading_pairs:
     - "BTC/USDT"
   max_position_size: 0.1  # 10% of balance per trade

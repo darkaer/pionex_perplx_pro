@@ -59,6 +59,8 @@ class AITradingBot:
         self.trade_count = 0
         self.total_pnl = 0.0
 
+        self.tasks = []  # Store references to main async tasks
+
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
         logging.basicConfig(
@@ -135,16 +137,19 @@ class AITradingBot:
 
             # Subscribe to trade data for all trading pairs
             for trading_pair in self.config.trading.trading_pairs:
-                symbol = trading_pair.replace("/", "_")
+                symbol = self._get_symbol(trading_pair)
                 await self.websocket_handler.subscribe("TRADE", symbol)
 
-            # Start main trading loop and balance sync
-            await asyncio.gather(
-                self._trading_loop(),
-                self._websocket_loop(),
-                self._monitoring_loop(),
-                self._sync_balance_loop()
-            )
+            # Start main trading loop and balance sync as tasks
+            loop = asyncio.get_running_loop()
+            self.tasks = [
+                loop.create_task(self._trading_loop(), name="trading_loop"),
+                loop.create_task(self._websocket_loop(), name="websocket_loop"),
+                loop.create_task(self._monitoring_loop(), name="monitoring_loop"),
+                loop.create_task(self._sync_balance_loop(), name="sync_balance_loop")
+            ]
+            self.logger.info("All main tasks started.")
+            await asyncio.gather(*self.tasks)
 
         except Exception as e:
             self.logger.error(f"Error in main loop: {str(e)}")
@@ -264,16 +269,22 @@ class AITradingBot:
                     df = ohlcv
                 # Ensure we have enough data
                 if len(df) >= 52:
+                    # EMA (9)
+                    ema_9 = ta.trend.ema_indicator(df['close'], window=9).iloc[-1]
                     # EMA (20)
                     ema_20 = ta.trend.ema_indicator(df['close'], window=20).iloc[-1]
                     # MA (50)
                     ma_50 = ta.trend.sma_indicator(df['close'], window=50).iloc[-1]
+                    # VWAP
+                    vwap = ta.volume.volume_weighted_average_price(df['high'], df['low'], df['close'], df['volume']).iloc[-1]
                 else:
-                    ema_20 = ma_50 = 'N/A'
+                    ema_9 = ema_20 = ma_50 = vwap = 'N/A'
             else:
-                ema_20 = ma_50 = 'N/A'
+                ema_9 = ema_20 = ma_50 = vwap = 'N/A'
+            current_data["ema_9"] = ema_9
             current_data["ema_20"] = ema_20
             current_data["ma_50"] = ma_50
+            current_data["vwap"] = vwap
 
         # Get risk metrics
         risk_metrics = self.risk_manager.get_risk_metrics()
@@ -287,6 +298,7 @@ class AITradingBot:
             "macd": current_data.get("macd", "N/A"),
             "bb_upper": current_data.get("bb_upper", "N/A"),
             "bb_lower": current_data.get("bb_lower", "N/A"),
+            "ema_9": current_data.get("ema_9", "N/A"),
             "ema_20": current_data.get("ema_20", "N/A"),
             "ma_50": current_data.get("ma_50", "N/A"),
             "support_level": current_data.get("support_level", "N/A"),
@@ -294,13 +306,14 @@ class AITradingBot:
             "news_headlines": "Recent market analysis shows mixed signals",
             "available_balance": risk_metrics.available_balance,
             "open_positions": risk_metrics.total_positions,
-            "daily_pnl": risk_metrics.daily_pnl
+            "daily_pnl": risk_metrics.daily_pnl,
+            "vwap": current_data.get("vwap", "N/A"),
         }
 
     async def _process_recommendation(self, recommendation: TradingRecommendation):
         """Process AI recommendation through risk management"""
         try:
-            symbol = recommendation.trading_pair.replace("/", "")
+            symbol = self._get_symbol(recommendation.trading_pair)
 
             # Skip if HOLD recommendation
             if recommendation.action == "HOLD":
@@ -328,10 +341,24 @@ class AITradingBot:
                     recommendation.stop_loss,
                     recommendation.action
                 )
-
                 if not valid_sl:
                     self.logger.warning(f"Invalid stop loss: {sl_reason}")
-                    return
+                    # Auto-correct stop loss
+                    sl_pct = self.config.trading.stop_loss_percentage / 100
+                    if recommendation.action == "BUY":
+                        recommendation.stop_loss = recommendation.entry_price * (1 - sl_pct)
+                    elif recommendation.action == "SELL":
+                        recommendation.stop_loss = recommendation.entry_price * (1 + sl_pct)
+                    self.logger.warning(f"Auto-corrected stop loss to {recommendation.stop_loss:.2f}")
+
+            # Auto-correct take profit if missing or invalid
+            tp_pct = self.config.trading.take_profit_percentage / 100
+            if not recommendation.take_profit or recommendation.take_profit == recommendation.entry_price:
+                if recommendation.action == "BUY":
+                    recommendation.take_profit = recommendation.entry_price * (1 + tp_pct)
+                elif recommendation.action == "SELL":
+                    recommendation.take_profit = recommendation.entry_price * (1 - tp_pct)
+                self.logger.warning(f"Auto-corrected take profit to {recommendation.take_profit:.2f}")
 
             # Execute trade
             await self._execute_trade(recommendation, position_size)
@@ -372,7 +399,7 @@ class AITradingBot:
 
             if success:
                 # Add position to risk manager
-                symbol = recommendation.trading_pair.replace("/", "")
+                symbol = self._get_symbol(recommendation.trading_pair)
                 self.risk_manager.add_position(
                     symbol=symbol,
                     side=recommendation.action,
@@ -404,7 +431,7 @@ class AITradingBot:
         """Execute real trade through Pionex API"""
         self.logger.info(f"REAL TRADE: {recommendation.action} {position_size} {recommendation.trading_pair}")
         try:
-            symbol = recommendation.trading_pair.replace("/", "_")
+            symbol = self._get_symbol(recommendation.trading_pair)
             side = recommendation.action
             # Determine order type and parameters
             if hasattr(recommendation, 'order_type') and recommendation.order_type == "MARKET":
@@ -724,21 +751,45 @@ class AITradingBot:
         try:
             self.logger.info("Shutting down AI Trading Bot...")
 
+            # Cancel all running tasks except the current one
+            current_task = asyncio.current_task()
+            for task in self.tasks:
+                if task is not current_task and not task.done():
+                    self.logger.info(f"Cancelling task: {task.get_name()}")
+                    task.cancel()
+            # Wait for all tasks to finish with timeout
+            try:
+                await asyncio.wait([t for t in self.tasks if t is not current_task], timeout=10)
+                self.logger.info("All main tasks cancelled.")
+            except Exception as e:
+                self.logger.error(f"Error waiting for tasks to cancel: {e}")
+
             # Close WebSocket connection
             if self.websocket_handler:
+                self.logger.info("Closing WebSocket handler...")
                 await self.websocket_handler.close()
 
             # Log final performance
+            self.logger.info("Logging final performance metrics...")
             await self._log_performance_metrics()
 
             # Save configuration backup
             if self.config_manager and self.config:
+                self.logger.info("Saving configuration backup...")
                 self.config_manager.save_config_backup()
 
             self.logger.info("Shutdown completed")
 
         except Exception as e:
             self.logger.error(f"Error during shutdown: {str(e)}")
+
+    # Helper function to get correct symbol format
+    def _get_symbol(self, trading_pair: str) -> str:
+        market_type = self.config.trading.market_type.lower()
+        symbol = trading_pair.replace("/", "")
+        if market_type == "perpetual":
+            return symbol + "_PERP"
+        return symbol
 
 
 async def main():
