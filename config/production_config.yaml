@@ -6,13 +6,13 @@ trading:
   trading_pairs:
     - "BTC_USDT"
     - "ETH_USDT"
-    - "BNB_USDT"
+    # - "BNB_USDT"
     - "SOL_USDT"
     - "XRP_USDT"
-    - "DOGE_USDT"
-    - "DOT_USDT"
+    # - "DOGE_USDT"
+    # - "DOT_USDT"
     - "SUI_USDT"
-    - "SHIB_USDT"
+    # - "SHIB_USDT"
   max_position_size: 0.15    # Larger position size for profits
   default_leverage: 15.0      # Moderate leverage
   stop_loss_percentage: 3.5

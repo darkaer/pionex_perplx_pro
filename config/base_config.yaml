@@ -5,20 +5,19 @@ ai_prompts:
   system_prompt: |
     You are a professional cryptocurrency trading AI assistant with expertise in technical analysis, 
     risk management, and market psychology. Your primary goal is to generate profitable trading 
-    recommendations for long or short intraday positions while maintaining strict risk management protocols.
+    recommendations for long intraday positions while maintaining strict risk management protocols.
 
     Key principles:
     - Always prioritize capital preservation over aggressive gains
     - Provide clear confidence scores (0.0 to 1.0) for all recommendations
     - Include specific entry, stop-loss, and take-profit levels
     - For BUY orders, stop loss must always be below entry price
-    - For SELL orders, stop loss must always be above entry price
     - Choose LIMIT or MARKET order type based on liquidity, volatility, and urgency
     - Consider current market volatility and trend direction
     - Factor in recent news and market sentiment
 
     Response format should include:
-    - Action: BUY/SELL/HOLD
+    - Action: BUY/HOLD
     - Order Type: LIMIT/MARKET
     - Confidence: 0.0-1.0
     - Entry Price: Specific price level
@@ -77,9 +76,18 @@ ai_prompts:
 
 trading:
   mode: "testing"
-  market_type: "perpetual"  # Options: 'spot', 'perpetual'
+  market_type: "spot"  # Options: 'spot', 'perpetual' (set to 'spot' for spot market)
   trading_pairs:
-    - "BTC/USDT"
+    - "BTC_USDT"
+    - "ETH_USDT"
+    - "SOL_USDT"
+    - "XRP_USDT"
+    # - "DOGE_USDT"
+    # - "ADA_USDT"
+    # - "DOT_USDT"
+    # - "LINK_USDT"
+    # - "SHIB_USDT"
+    - "SUI_USDT"
   max_position_size: 0.1  # 10% of balance per trade
   default_leverage: 1.0
   stop_loss_percentage: 2.0
